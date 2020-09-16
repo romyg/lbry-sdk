@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from binascii import hexlify, unhexlify
 
 from sqlalchemy import table, bindparam, text, func, union
 from sqlalchemy.future import select
@@ -13,6 +15,7 @@ from lbry.db.tables import (
 from lbry.db.query_context import ProgressContext, event_emitter, context
 from lbry.db.sync import set_input_addresses, update_spent_outputs
 from lbry.blockchain.block import Block, create_block_filter
+from lbry.blockchain.transaction import Transaction
 from lbry.blockchain.bcd_data_stream import BCDataStream
 
 from .context import get_or_initialize_lbrycrd
@@ -58,6 +61,30 @@ def sync_block_file(
         done_txs += loader.flush(TX)
         p.step(done_blocks, done_txs)
     return last_block_processed
+
+
+@event_emitter("blockchain.sync.mempool.main", "txs")
+def sync_mempool(p: ProgressContext):
+    chain = get_or_initialize_lbrycrd(p.ctx)
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    mempool = loop.run_until_complete(chain.get_raw_mempool())
+    current = [hexlify(r['tx_hash'][::-1]) for r in p.ctx.fetchall(
+        select(TX.c.tx_hash).where(TX.c.height < 0)
+    )]
+    loader = p.ctx.get_bulk_loader()
+    for txid in mempool:
+        if txid not in current:
+            raw_tx = loop.run_until_complete(chain.get_raw_transaction(txid))
+            loader.add_transaction(
+                None, Transaction(unhexlify(raw_tx), height=-1)
+            )
+        if p.ctx.stop_event.is_set():
+            return
+    loader.flush(TX)
 
 
 @event_emitter("blockchain.sync.spends.main", "steps")
