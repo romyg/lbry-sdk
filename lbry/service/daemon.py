@@ -73,7 +73,7 @@ class Daemon:
     Mostly connects API to aiohttp stuff.
     Handles starting and stopping API
     """
-    def __init__(self, service: Service, console: Console):
+    def __init__(self, service: Service, console: Console, loop: asyncio.AbstractEventLoop = None):
         self._loop = asyncio.get_running_loop()
         self.service = service
         self.conf = service.conf
