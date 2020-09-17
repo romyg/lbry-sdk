@@ -2,6 +2,7 @@ import os
 import asyncio
 import logging
 from typing import Optional, Tuple, Set, List, Coroutine
+from concurrent.futures import ThreadPoolExecutor
 
 from lbry.db import Database
 from lbry.db import queries as q
@@ -13,6 +14,7 @@ from lbry.blockchain.lbrycrd import Lbrycrd
 from lbry.error import LbrycrdEventSubscriptionError
 
 from . import blocks as block_phase, claims as claim_phase, supports as support_phase
+from .context import uninitialize
 
 log = logging.getLogger(__name__)
 
@@ -87,6 +89,8 @@ class BlockchainSync(Sync):
         ):
             if subscription is not None:
                 subscription.cancel()
+        if isinstance(self.db.executor, ThreadPoolExecutor):
+            await self.db.run(uninitialize)
 
     async def run_tasks(self, tasks: List[Coroutine]) -> Optional[Set[asyncio.Future]]:
         done, pending = await asyncio.wait(
@@ -321,8 +325,9 @@ class BlockchainSync(Sync):
 
     async def sync_mempool(self):
         await self.db.run(block_phase.sync_mempool)
-        #await self.sync_spends([-1])
-        #await self.sync_claims([-1])
+        await self.sync_spends([-1])
+        await self.db.run(claim_phase.claims_insert, [-2, 0], True, self.CLAIM_FLUSH_SIZE)
+        await self.db.run(claim_phase.claims_vacuum)
 
     async def advance_loop(self):
         while True:
@@ -333,6 +338,7 @@ class BlockchainSync(Sync):
                 ], return_when=asyncio.FIRST_COMPLETED)
                 if self.block_hash_event.is_set():
                     self.block_hash_event.clear()
+                    await self.db.run(block_phase.clear_mempool)
                     await self.advance()
                 self.tx_hash_event.clear()
                 await self.sync_mempool()

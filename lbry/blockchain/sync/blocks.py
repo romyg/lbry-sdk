@@ -63,22 +63,22 @@ def sync_block_file(
     return last_block_processed
 
 
+@event_emitter("blockchain.sync.mempool.clear", "txs")
+def clear_mempool(p: ProgressContext):
+    delete_all_the_things(-1, p)
+
+
 @event_emitter("blockchain.sync.mempool.main", "txs")
 def sync_mempool(p: ProgressContext):
     chain = get_or_initialize_lbrycrd(p.ctx)
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    mempool = loop.run_until_complete(chain.get_raw_mempool())
+    mempool = chain.sync_run(chain.get_raw_mempool())
     current = [hexlify(r['tx_hash'][::-1]) for r in p.ctx.fetchall(
         select(TX.c.tx_hash).where(TX.c.height < 0)
     )]
     loader = p.ctx.get_bulk_loader()
     for txid in mempool:
         if txid not in current:
-            raw_tx = loop.run_until_complete(chain.get_raw_transaction(txid))
+            raw_tx = chain.sync_run(chain.get_raw_transaction(txid))
             loader.add_transaction(
                 None, Transaction(unhexlify(raw_tx), height=-1)
             )
@@ -221,18 +221,27 @@ def get_block_tx_addresses(block_hash=None, tx_hash=None):
 
 @event_emitter("blockchain.sync.rewind.main", "steps")
 def rewind(height: int, p: ProgressContext):
+    delete_all_the_things(height, p)
+
+
+def delete_all_the_things(height: int, p: ProgressContext):
+    def constrain(col):
+        if height >= 0:
+            return col >= height
+        return col <= height
+
     deletes = [
-        BlockTable.delete().where(BlockTable.c.height >= height),
-        TXI.delete().where(TXI.c.height >= height),
-        TXO.delete().where(TXO.c.height >= height),
-        TX.delete().where(TX.c.height >= height),
+        BlockTable.delete().where(constrain(BlockTable.c.height)),
+        TXI.delete().where(constrain(TXI.c.height)),
+        TXO.delete().where(constrain(TXO.c.height)),
+        TX.delete().where(constrain(TX.c.height)),
         Tag.delete().where(
             Tag.c.claim_hash.in_(
-                select(Claim.c.claim_hash).where(Claim.c.height >= height)
+                select(Claim.c.claim_hash).where(constrain(Claim.c.height))
             )
         ),
-        Claim.delete().where(Claim.c.height >= height),
-        Support.delete().where(Support.c.height >= height),
+        Claim.delete().where(constrain(Claim.c.height)),
+        Support.delete().where(constrain(Support.c.height)),
     ]
     for delete in p.iter(deletes):
         p.ctx.execute(delete)

@@ -85,6 +85,7 @@ class Lbrycrd:
 
         self.db = BlockchainDB(self.actual_data_dir)
         self._session: Optional[aiohttp.ClientSession] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     @property
     def session(self) -> aiohttp.ClientSession:
@@ -190,6 +191,9 @@ class Lbrycrd:
 
     async def close(self):
         await self.db.close()
+        await self.close_session()
+
+    async def close_session(self):
         if self._session is not None:
             await self._session.close()
 
@@ -259,6 +263,14 @@ class Lbrycrd:
             self.subscribed = False
             self.subscription.cancel()
             self.subscription = None
+
+    def sync_run(self, coro):
+        if self._loop is None:
+            try:
+                self._loop = asyncio.get_event_loop()
+            except RuntimeError:
+                self._loop = asyncio.new_event_loop()
+        return self._loop.run_until_complete(coro)
 
     async def rpc(self, method, params=None):
         if self._session is not None and self._session.closed:

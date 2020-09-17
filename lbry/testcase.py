@@ -427,7 +427,7 @@ class IntegrationTestCase(AsyncioTestCase):
     async def make_db(self, chain):
         db_driver = os.environ.get('TEST_DB', 'sqlite')
         if db_driver == 'sqlite':
-            db = Database.temp_sqlite_regtest(chain.ledger.conf.lbrycrd_dir)
+            db = Database.temp_sqlite_regtest(chain.ledger.conf)
         elif db_driver.startswith('postgres') or db_driver.startswith('psycopg'):
             db_driver = 'postgresql'
             db_name = f'lbry_test_chain'
@@ -437,7 +437,7 @@ class IntegrationTestCase(AsyncioTestCase):
             await meta_db.create(db_name)
             db = Database.temp_from_url_regtest(
                 f'postgresql://{db_connection}/{db_name}',
-                chain.ledger.conf.lbrycrd_dir
+                chain.ledger.conf
             )
         else:
             raise RuntimeError(f"Unsupported database driver: {db_driver}")
